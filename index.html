@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Arduino Room Monitor</title>
+    <style>
+        :root {
+            --bg-mat: #2c3e50;
+            --mat-grid: rgba(255,255,255,0.05);
+            
+            /* Components */
+            --arduino-teal: #00878F;
+            --arduino-dark: #005f63;
+            --pcb-blue: #004d99;
+            --pcb-green: #006400;
+            
+            /* LCD */
+            --lcd-backlight: #76c900; /* Classic Green */
+            --lcd-off: #5c7a29;
+            --lcd-pixel: #1a240a;
+            
+            /* Wires */
+            --wire-red: #e74c3c;
+            --wire-black: #2c3e50;
+            --wire-blue: #3498db;
+            --wire-yellow: #f1c40f;
+            --wire-green: #2ecc71;
+            
+            /* Fan */
+            --fan-plastic: #1a1a1a;
+            --fan-blade: #333;
+        }
+
+        body {
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            background-image: 
+                linear-gradient(var(--mat-grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--mat-grid) 1px, transparent 1px);
+            background-size: 40px 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start; /* Changed from center to allow scrolling if needed */
+            min-height: 100vh;
+            margin: 0;
+            color: #eee;
+            padding-top: 20px;
+            overflow-x: hidden; /* Prevent horizontal scroll on mobile */
+        }
+
+        h1 {
+            margin-bottom: 10px;
+            font-weight: 200;
+            letter-spacing: 1px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            text-align: center;
+            font-size: clamp(1.5rem, 4vw, 2.5rem); /* Responsive font size */
+        }
+
+        .instructions {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            padding: 12px 25px;
+            border-radius: 30px;
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+            font-size: 0.9rem;
+            color: #ddd;
+            z-index: 100;
+            display: flex;
+            flex-wrap: wrap; /* Allow wrapping on mobile */
+            justify-content: center;
+            gap: 15px;
+            max-width: 90%;
+            text-align: center;
+        }
+        
+        .instructions strong { color: #fff; }
+
+        /* Scale Wrapper for Responsiveness */
+        .workbench-scale-wrapper {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            overflow: visible;
+            margin-bottom: 50px;
+        }
+
+        /* Main Workbench Area */
+        .workbench {
+            position: relative;
+            width: 900px;
+            height: 600px;
+            background: radial-gradient(circle at center, #34495e 0%, #2c3e50 100%);
+            border-radius: 15px;
+            box-shadow: 
+                inset 0 0 60px rgba(0,0,0,0.5), 
+                0 20px 50px rgba(0,0,0,0.5),
+                0 0 0 10px #222; /* Desk rim */
+            border: 1px solid #444;
+            perspective: 1000px;
+            flex-shrink: 0; /* Prevent flexbox from squishing it */
+            transform-origin: top center; /* Scale from top */
+        }
+
+        /* SVG Wire Layer */
+        .wire-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
+            overflow: visible;
+            filter: drop-shadow(0px 4px 3px rgba(0,0,0,0.4));
+        }
+        
+        /* Base Wire Style - Solid Color */
+        .wire {
+            fill: none;
+            stroke-width: 6;
+            stroke-linecap: round;
+            opacity: 1;
+        }
+        
+        /* Wire highlights to make them look 3D */
+        .wire-highlight {
+            fill: none;
+            stroke: rgba(255,255,255,0.2);
+            stroke-width: 2;
+            stroke-linecap: round;
+            pointer-events: none;
+        }
+
+        /* Current Flow Animation Layer */
+        .current-flow {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.9);
+            stroke-width: 2;
+            stroke-dasharray: 10, 15; /* Dash, Gap */
+            stroke-linecap: round;
+            animation: flow 0.5s linear infinite;
+            opacity: 0; /* Hidden by default */
+            transition: opacity 0.2s ease-in-out;
+            filter: drop-shadow(0 0 3px rgba(255,255,255,0.8));
+        }
+
+        .current-flow.active {
+            opacity: 1;
+        }
+
+        @keyframes flow {
+            to { stroke-dashoffset: -25; }
+        }
+
+        /* --- COMPONENT STYLES --- */
+
+        /* Arduino UNO */
+        .arduino {
+            position: absolute;
+            bottom: 50px;
+            left: 300px;
+            width: 320px;
+            height: 220px;
+            background-color: var(--arduino-teal);
+            border-radius: 4px;
+            /* Realistic PCB layering */
+            background-image: 
+                linear-gradient(45deg, transparent 48%, rgba(255,255,255,0.1) 50%, transparent 52%),
+                linear-gradient(-45deg, transparent 48%, rgba(255,255,255,0.1) 50%, transparent 52%);
+            background-size: 10px 10px;
+            box-shadow: 
+                0 15px 35px rgba(0,0,0,0.4), 
+                inset 0 0 0 1px rgba(255,255,255,0.1),
+                0 4px 0 #005f63; /* PCB Thickness */
+            z-index: 5;
+            transform: rotateX(10deg); /* Slight 3D tilt */
+            transform-style: preserve-3d;
+        }
+
+        /* Arduino Branding */
+        .arduino::before {
+            content: "Arduino";
+            font-family: "Trebuchet MS", sans-serif;
+            font-weight: bold;
+            font-style: italic;
+            color: white;
+            font-size: 24px;
+            position: absolute;
+            top: 30px;
+            right: 40px;
+            opacity: 0.9;
+        }
+        .arduino::after {
+            content: "UNO";
+            font-family: sans-serif;
+            font-weight: 900;
+            color: white;
+            font-size: 32px;
+            position: absolute;
+            top: 55px;
+            right: 40px;
+            letter-spacing: 2px;
+        }
+
+        /* ATmega Chip */
+        .atmega {
+            position: absolute;
+            bottom: 60px;
+            right: 80px;
+            width: 100px;
+            height: 30px;
+            background: #111;
+            border-radius: 2px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.6);
+            display: flex;
+            justify-content: space-between;
+            padding: 0 2px;
+        }
+        .atmega::before {
+            content: "ATMEGA328P";
+            color: #555;
+            font-size: 8px;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+        }
+        /* Chip legs */
+        .chip-legs {
+            width: 4px;
+            height: 100%;
+            background: repeating-linear-gradient(to bottom, #ccc 0, #ccc 2px, transparent 2px, transparent 4px);
+        }
+
+        /* USB Port */
+        .usb-port {
+            position: absolute;
+            left: -10px;
+            top: 20px;
+            width: 30px;
+            height: 50px;
+            background: linear-gradient(90deg, #bdc3c7, #95a5a6);
+            border: 1px solid #7f8c8d;
+            border-radius: 2px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+        }
+
+        /* Power Jack */
+        .power-jack {
+            position: absolute;
+            left: -5px;
+            bottom: 20px;
+            width: 35px;
+            height: 40px;
+            background: #111;
+            border-radius: 2px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.3);
+        }
+
+        /* Headers */
+        .pin-header {
+            background: #111;
+            height: 22px;
+            display: flex;
+            justify-content: space-evenly;
+            align-items: center;
+            padding: 0 5px;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.6);
+            border-radius: 1px;
+        }
+        
+        .pin-header.top { position: absolute; top: 5px; right: 20px; width: 190px; }
+        .pin-header.bottom { position: absolute; bottom: 5px; right: 20px; width: 190px; }
+        .pin-header.power { position: absolute; bottom: 5px; left: 45px; width: 90px; }
+        
+        .pin-socket {
+            width: 10px;
+            height: 10px;
+            background: #000;
+            border: 1px solid #333;
+            box-shadow: inset 0 0 2px #000;
+            border-radius: 1px;
+            position: relative;
+        }
+
+        /* Pin Labels */
+        .pin-socket::after {
+            content: attr(data-label);
+            position: absolute;
+            top: -18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 9px;
+            color: white;
+            font-family: monospace;
+            pointer-events: none;
+            text-shadow: 0 1px 2px black;
+        }
+        .pin-header.bottom .pin-socket::after { top: auto; bottom: -18px; }
+
+        /* LCD Module */
+        .lcd-module {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            width: 280px;
+            height: 150px;
+            background: #004d00; /* Dark Green PCB */
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.4), 0 4px 0 #003300;
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .lcd-bezel {
+            width: 100%;
+            height: 90px;
+            background: #111;
+            border-radius: 4px;
+            padding: 8px;
+            box-sizing: border-box;
+            box-shadow: inset 0 0 5px rgba(255,255,255,0.1);
+        }
+
+        .lcd-screen {
+            width: 100%;
+            height: 100%;
+            background: var(--lcd-backlight);
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.2);
+            font-family: 'Courier New', monospace;
+            color: var(--lcd-pixel);
+            display: grid;
+            place-items: center;
+            font-size: 20px;
+            font-weight: bold;
+            white-space: pre;
+            text-shadow: 1px 1px 0 rgba(255,255,255,0.2);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* LCD Pixel Grid Effect */
+        .lcd-screen::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: 
+                linear-gradient(rgba(0,0,0,0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,0,0,0.05) 1px, transparent 1px);
+            background-size: 3px 3px;
+            pointer-events: none;
+        }
+
+        .lcd-pins {
+            margin-top: auto;
+            width: 100%;
+            display: flex;
+            justify-content: flex-start;
+            padding-left: 10px;
+            gap: 15px;
+        }
+
+        /* Sensors */
+        .sensor-group {
+            position: absolute;
+            top: 50px;
+            left: 250px;
+            display: flex;
+            gap: 50px;
+            z-index: 5;
+        }
+
+        .sensor {
+            width: 80px;
+            height: 130px;
+            background: var(--pcb-blue);
+            border-radius: 4px;
+            position: relative;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.2s;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4), 0 3px 0 #003366;
+            border: 1px solid rgba(255,255,255,0.1);
+            touch-action: manipulation; /* Improve touch response */
+        }
+
+        .sensor:hover { transform: translateY(-2px); }
+        .sensor:active { transform: translateY(2px); box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
+
+        .sensor-label {
+            position: absolute;
+            top: 45%;
+            width: 100%;
+            text-align: center;
+            font-weight: bold;
+            color: rgba(255,255,255,0.9);
+            font-size: 11px;
+            pointer-events: none;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* IR Diodes */
+        .ir-led {
+            width: 16px;
+            height: 20px;
+            border-radius: 8px 8px 0 0;
+            position: absolute;
+            top: -15px;
+            border: 1px solid rgba(0,0,0,0.5);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .ir-led.left { 
+            left: 15px; 
+            background: radial-gradient(circle at 30% 30%, #555, #000); /* Black IR Receiver */
+        }
+        .ir-led.right { 
+            right: 15px; 
+            background: radial-gradient(circle at 30% 30%, #fff, #aaddff 40%, #88ccff); /* Clear IR Emitter */
+            opacity: 0.9;
+        }
+
+        /* Potentiometer */
+        .potentiometer {
+            width: 16px;
+            height: 16px;
+            background: #d4af37; /* Brass/Gold */
+            border-radius: 50%;
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            box-shadow: inset 0 0 2px rgba(0,0,0,0.5);
+        }
+        .potentiometer::after {
+            content: "";
+            position: absolute;
+            top: 50%; left: 10%;
+            width: 80%; height: 2px;
+            background: rgba(0,0,0,0.3);
+            transform: translateY(-50%) rotate(45deg);
+        }
+
+        .sensor-pins {
+            position: absolute;
+            bottom: 8px;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        /* Status LED */
+        .smd-led {
+            width: 6px;
+            height: 10px;
+            background: #400;
+            position: absolute;
+            top: 65%;
+            right: 10px;
+            border-radius: 1px;
+            box-shadow: inset 0 0 1px black;
+        }
+        .sensor.active .smd-led {
+            background: #ff0000;
+            box-shadow: 0 0 10px #ff0000, 0 0 20px #ff0000;
+        }
+
+        /* Fan */
+        .fan-container {
+            position: absolute;
+            top: 180px;
+            left: 40px;
+            width: 140px;
+            height: 140px;
+            background: var(--fan-plastic);
+            border-radius: 10px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+            z-index: 5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid #333;
+        }
+
+        /* Screw holes */
+        .fan-container::before, .fan-container::after {
+            content: ""; position: absolute; width: 8px; height: 8px; background: #000; border-radius: 50%;
+            box-shadow: inset 0 0 2px #555;
+        }
+        .fan-container::before { top: 8px; left: 8px; box-shadow: 116px 0 0 #000, 0 116px 0 #000, 116px 116px 0 #000; }
+
+        .fan-grill {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: #111;
+            position: relative;
+            overflow: hidden;
+            border: 2px solid #333;
+            box-shadow: inset 0 0 10px #000;
+        }
+
+        .fan-blades {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transition: transform 0.5s ease-in; /* Smooth start */
+        }
+
+        /* IMPROVED FAN BLADES */
+        .blade {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 55px;
+            height: 35px; /* Wider for scoop shape */
+            /* Dark plastic gradient */
+            background: linear-gradient(135deg, #2a2a2a 0%, #111 100%);
+            /* Aerodynamic curve shape */
+            border-radius: 10% 50% 50% 10%;
+            transform-origin: 10px 50%; /* Offset pivot to create hub space */
+            box-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        
+        /* 7 Blades distributed evenly (360 / 7 ≈ 51.4deg) */
+        .blade:nth-child(1) { transform: translate(-10px, -50%) rotate(0deg); }
+        .blade:nth-child(2) { transform: translate(-10px, -50%) rotate(51.4deg); }
+        .blade:nth-child(3) { transform: translate(-10px, -50%) rotate(102.8deg); }
+        .blade:nth-child(4) { transform: translate(-10px, -50%) rotate(154.2deg); }
+        .blade:nth-child(5) { transform: translate(-10px, -50%) rotate(205.6deg); }
+        .blade:nth-child(6) { transform: translate(-10px, -50%) rotate(257deg); }
+        .blade:nth-child(7) { transform: translate(-10px, -50%) rotate(308.4deg); }
+
+        .fan-center {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            background: radial-gradient(circle at 30% 30%, #444, #000);
+            border-radius: 50%;
+            z-index: 10;
+            border: 1px solid #333;
+            box-shadow: 0 0 5px rgba(0,0,0,0.8);
+        }
+        
+        /* Sticker on fan */
+        .fan-center::after {
+            content: "12V";
+            color: #666;
+            font-size: 9px;
+            font-weight: bold;
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: Arial, sans-serif;
+        }
+
+        .fan-pins {
+            position: absolute;
+            bottom: -15px;
+            display: flex;
+            gap: 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .fan-spinning .fan-blades {
+            animation: spin 0.15s linear infinite;
+        }
+
+        /* Pin/Node Styling */
+        .pin-node {
+            width: 12px;
+            height: 12px;
+            background: radial-gradient(circle at 30% 30%, #ffd700, #b8860b); /* Gold Solder Pad */
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            position: relative;
+            z-index: 30;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .pin-node:hover {
+            transform: scale(1.2);
+            cursor: crosshair;
+        }
+        
+        /* Labels for pins */
+        .pin-label {
+            position: absolute;
+            font-size: 9px;
+            color: rgba(255,255,255,0.7);
+            font-family: sans-serif;
+            white-space: nowrap;
+            text-shadow: 0 1px 2px black;
+            pointer-events: none;
+        }
+        .top-label { bottom: 14px; left: 50%; transform: translateX(-50%); }
+        .bottom-label { top: 14px; left: 50%; transform: translateX(-50%); }
+
+    </style>
+</head>
+<body>
+
+    <h1>Arduino Room Capacity System</h1>
+    <div class="instructions">
+        <div>🖱️ Tap <strong>IN SENSOR</strong> to add people</div>
+        <div>🖱️ Tap <strong>OUT SENSOR</strong> to remove people</div>
+        <div>⚙️ Max Capacity: 10</div>
+    </div>
+
+    <!-- Scale Wrapper for Mobile Responsiveness -->
+    <div class="workbench-scale-wrapper">
+        <div class="workbench" id="workbench">
+            <!-- SVG Wires Layer -->
+            <svg class="wire-layer" id="wire-svg">
+                <!-- Wires will be injected here by JS -->
+            </svg>
+
+            <!-- Fan -->
+            <div class="fan-container" id="fan">
+                <div class="fan-grill">
+                    <div class="fan-blades">
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                        <div class="blade"></div>
+                    </div>
+                    <div class="fan-center"></div>
+                </div>
+                <div class="fan-pins">
+                    <div id="fan-vcc" class="pin-node"><span class="pin-label bottom-label">VCC</span></div>
+                    <div id="fan-gnd" class="pin-node"><span class="pin-label bottom-label">GND</span></div>
+                </div>
+            </div>
+
+            <!-- Sensors -->
+            <div class="sensor-group">
+                <!-- Sensor OUT -->
+                <div class="sensor" id="sensor-out" onclick="triggerSensor('out')">
+                    <div class="sensor-label">OUT</div>
+                    <div class="ir-led left"></div>
+                    <div class="ir-led right"></div>
+                    <div class="potentiometer"></div>
+                    <div class="smd-led"></div>
+                    <div class="sensor-pins">
+                        <div id="s-out-vcc" class="pin-node"><span class="pin-label top-label">VCC</span></div>
+                        <div id="s-out-gnd" class="pin-node"><span class="pin-label top-label">GND</span></div>
+                        <div id="s-out-sig" class="pin-node"><span class="pin-label top-label">DO</span></div>
+                    </div>
+                </div>
+                
+                <!-- Sensor IN -->
+                <div class="sensor" id="sensor-in" onclick="triggerSensor('in')">
+                    <div class="sensor-label">IN</div>
+                    <div class="ir-led left"></div>
+                    <div class="ir-led right"></div>
+                    <div class="potentiometer"></div>
+                    <div class="smd-led"></div>
+                    <div class="sensor-pins">
+                        <div id="s-in-vcc" class="pin-node"><span class="pin-label top-label">VCC</span></div>
+                        <div id="s-in-gnd" class="pin-node"><span class="pin-label top-label">GND</span></div>
+                        <div id="s-in-sig" class="pin-node"><span class="pin-label top-label">DO</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LCD -->
+            <div class="lcd-module">
+                <div class="lcd-bezel">
+                    <div class="lcd-screen" id="lcd-text">Initializing...</div>
+                </div>
+                <div class="lcd-pins">
+                    <div id="lcd-gnd" class="pin-node"><span class="pin-label bottom-label">GND</span></div>
+                    <div id="lcd-vcc" class="pin-node"><span class="pin-label bottom-label">VCC</span></div>
+                    <div id="lcd-sda" class="pin-node"><span class="pin-label bottom-label">SDA</span></div>
+                    <div id="lcd-scl" class="pin-node"><span class="pin-label bottom-label">SCL</span></div>
+                </div>
+            </div>
+
+            <!-- Arduino -->
+            <div class="arduino">
+                <div class="usb-port"></div>
+                <div class="power-jack"></div>
+                <div class="atmega">
+                    <div class="chip-legs"></div>
+                    <div class="chip-legs"></div>
+                </div>
+                
+                <!-- Digital Pins (Top) -->
+                <div class="pin-header top">
+                    <div class="pin-socket" data-label="D7"></div>
+                    <div class="pin-socket" data-label="D6"></div>
+                    <div class="pin-socket" id="ard-d5" data-label="D5"></div> <!-- Fan Control -->
+                    <div class="pin-socket" data-label="D4"></div>
+                    <div class="pin-socket" id="ard-d3" data-label="D3"></div> <!-- Sensor Out -->
+                    <div class="pin-socket" id="ard-d2" data-label="D2"></div> <!-- Sensor In -->
+                    <div class="pin-socket" data-label="TX"></div>
+                    <div class="pin-socket" data-label="RX"></div>
+                </div>
+
+                <!-- Power Pins (Bottom Left) -->
+                <div class="pin-header power">
+                    <div class="pin-socket" id="ard-5v" data-label="5V"></div>
+                    <div class="pin-socket" id="ard-gnd1" data-label="GND"></div>
+                    <div class="pin-socket" id="ard-gnd2" data-label="GND"></div>
+                </div>
+
+                <!-- Analog Pins (Bottom Right) -->
+                <div class="pin-header bottom">
+                    <div class="pin-socket" id="ard-a5" data-label="A5"></div> <!-- SCL -->
+                    <div class="pin-socket" id="ard-a4" data-label="A4"></div> <!-- SDA -->
+                    <div class="pin-socket" data-label="A3"></div>
+                    <div class="pin-socket" data-label="A2"></div>
+                    <div class="pin-socket" data-label="A1"></div>
+                    <div class="pin-socket" data-label="A0"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- LOGIC & STATE ---
+        let visitorCount = 0;
+        const maxCapacity = 10;
+        
+        const lcdText = document.getElementById('lcd-text');
+        const fan = document.getElementById('fan');
+        const sensorIn = document.getElementById('sensor-in');
+        const sensorOut = document.getElementById('sensor-out');
+
+        // Helper to toggle flow animation on specific wires
+        function setFlowState(flowId, isActive) {
+            const flowEl = document.getElementById(flowId);
+            if(flowEl) {
+                if(isActive) flowEl.classList.add('active');
+                else flowEl.classList.remove('active');
+            }
+        }
+
+        // Helper for momentary pulses (signals)
+        function triggerFlowPulse(flowId) {
+            const flowEl = document.getElementById(flowId);
+            if(flowEl) {
+                flowEl.classList.add('active');
+                setTimeout(() => flowEl.classList.remove('active'), 600);
+            }
+        }
+
+        function updateSystem() {
+            let fanStatus = "OFF";
+            
+            // Fan Logic
+            if (visitorCount > 0) {
+                fan.classList.add('fan-spinning');
+                fanStatus = "ON ";
+                setFlowState('flow-fan', true); // Turn on fan wire flow
+            } else {
+                fan.classList.remove('fan-spinning');
+                fanStatus = "OFF";
+                setFlowState('flow-fan', false); // Turn off fan wire flow
+            }
+
+            // LCD Logic
+            let line1 = `VISITORS: ${visitorCount.toString().padEnd(2, ' ')}`;
+            let line2 = `FAN: ${fanStatus}`;
+
+            if (visitorCount >= maxCapacity) {
+                line2 = "FULL CAPACITY!";
+                lcdText.style.backgroundColor = "#aadd00"; 
+                lcdText.style.color = (Date.now() % 2 === 0) ? "#000" : "#330000";
+            } else {
+                lcdText.style.backgroundColor = "var(--lcd-backlight)";
+                lcdText.style.color = "var(--lcd-pixel)";
+            }
+
+            lcdText.innerHTML = `${line1}<br>${line2}`;
+        }
+
+        function triggerSensor(type) {
+            const sensor = type === 'in' ? sensorIn : sensorOut;
+            sensor.classList.add('active');
+
+            if (type === 'in') {
+                triggerFlowPulse('flow-sig-in'); // Pulse the signal wire
+                if (visitorCount < maxCapacity) {
+                    visitorCount++;
+                } else {
+                    // Visual feedback for full
+                    lcdText.style.backgroundColor = "#ff5555";
+                    setTimeout(() => updateSystem(), 200);
+                }
+            } else {
+                triggerFlowPulse('flow-sig-out'); // Pulse the signal wire
+                if (visitorCount > 0) {
+                    visitorCount--;
+                }
+            }
+
+            updateSystem();
+
+            setTimeout(() => {
+                sensor.classList.remove('active');
+            }, 200);
+        }
+
+        // --- WIRE DRAWING ENGINE & RESPONSIVENESS ---
+
+        const svg = document.getElementById('wire-svg');
+        const workbench = document.getElementById('workbench');
+        const scaleWrapper = document.querySelector('.workbench-scale-wrapper');
+        let currentScale = 1;
+
+        // Handle Scaling
+        function handleResize() {
+            const availableWidth = window.innerWidth - 20; // Padding
+            const baseWidth = 900;
+            
+            currentScale = Math.min(availableWidth / baseWidth, 1);
+            
+            // Apply scale
+            workbench.style.transform = `scale(${currentScale})`;
+            
+            // Adjust wrapper height so elements below don't overlap or sit too far
+            scaleWrapper.style.height = `${600 * currentScale + 20}px`;
+            
+            // Redraw wires because positions might shift slightly in calculation logic
+            connectAll();
+        }
+
+        function getCenter(elementId) {
+            const el = document.getElementById(elementId);
+            if (!el) return { x: 0, y: 0 };
+            
+            // Get viewport coordinates
+            const rect = el.getBoundingClientRect();
+            const wbRect = workbench.getBoundingClientRect();
+            
+            // Calculate position relative to workbench, corrected for scale
+            // We need the "internal" 900x600 coordinates for the SVG
+            const x = (rect.left - wbRect.left + rect.width / 2) / currentScale;
+            const y = (rect.top - wbRect.top + rect.height / 2) / currentScale;
+            
+            return { x, y };
+        }
+
+        // Modified drawWire to support flow animations
+        function drawWire(startId, endId, color, flowId = null, startActive = false) {
+            const start = getCenter(startId);
+            const end = getCenter(endId);
+
+            // Add some randomness to wire paths
+            const curvature = 60 + (Math.random() * 20); 
+
+            let cp1, cp2;
+
+            // Wire routing logic
+            if (start.y < end.y) {
+                cp1 = { x: start.x, y: start.y + curvature }; 
+                cp2 = { x: end.x, y: end.y - curvature };     
+            } else {
+                cp1 = { x: start.x, y: start.y + curvature };
+                cp2 = { x: end.x, y: end.y + curvature };
+            }
+
+            const d = `M ${start.x} ${start.y} C ${cp1.x} ${cp1.y}, ${cp2.x} ${cp2.y}, ${end.x} ${end.y}`;
+
+            // 1. Highlight Wire (for 3D depth)
+            const highlight = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            highlight.setAttribute("d", d);
+            highlight.setAttribute("class", "wire-highlight");
+            highlight.setAttribute("transform", "translate(-1, -1)");
+            svg.appendChild(highlight);
+
+            // 2. Base Solid Wire (The insulation color)
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", d);
+            path.setAttribute("class", "wire");
+            path.setAttribute("stroke", color);
+            svg.appendChild(path);
+
+            // 3. Current Flow Overlay (The electricity effect)
+            if (flowId) {
+                const flow = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                flow.setAttribute("d", d);
+                flow.setAttribute("class", "current-flow");
+                flow.setAttribute("id", flowId);
+                if(startActive) flow.classList.add('active');
+                svg.appendChild(flow);
+            }
+        }
+
+        function connectAll() {
+            svg.innerHTML = '';
+
+            // --- SENSOR IN ---
+            // Power wires always flow
+            drawWire('s-in-vcc', 'ard-5v', 'var(--wire-red)', 'flow-sin-pwr', true);
+            drawWire('s-in-gnd', 'ard-gnd1', 'var(--wire-black)'); // Ground usually doesn't show flow in diagrams
+            // Signal wire flows on trigger
+            drawWire('s-in-sig', 'ard-d2', 'var(--wire-blue)', 'flow-sig-in');
+
+            // --- SENSOR OUT ---
+            drawWire('s-out-vcc', 'ard-5v', 'var(--wire-red)', 'flow-sout-pwr', true);
+            drawWire('s-out-gnd', 'ard-gnd1', 'var(--wire-black)');
+            drawWire('s-out-sig', 'ard-d3', 'var(--wire-yellow)', 'flow-sig-out');
+
+            // --- FAN ---
+            // Fan power flows only when fan is ON
+            drawWire('fan-vcc', 'ard-d5', 'var(--wire-red)', 'flow-fan');
+            drawWire('fan-gnd', 'ard-gnd2', 'var(--wire-black)');
+
+            // --- LCD ---
+            // LCD Power always flows
+            drawWire('lcd-vcc', 'ard-5v', 'var(--wire-red)', 'flow-lcd-pwr', true);
+            drawWire('lcd-gnd', 'ard-gnd2', 'var(--wire-black)');
+            // Data lines always flow (communication)
+            drawWire('lcd-sda', 'ard-a4', 'var(--wire-green)', 'flow-lcd-sda', true);
+            drawWire('lcd-scl', 'ard-a5', 'var(--wire-yellow)', 'flow-lcd-scl', true);
+        }
+
+        // Init
+        window.addEventListener('load', () => {
+            handleResize(); // Set initial scale
+            // Delay slightly to ensure layout is settled
+            setTimeout(() => {
+                connectAll();
+                updateSystem();
+            }, 100);
+        });
+
+        // Debounce resize for performance
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                handleResize();
+            }, 50);
+        });
+
+    </script>
+</body>
+</html>
